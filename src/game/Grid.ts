@@ -29,6 +29,7 @@ export class Grid {
 
   private root: THREE.Group;
   private arenaTiles: THREE.Mesh[] = [];
+  private arenaTileByCell: Map<string, THREE.Mesh> = new Map();
   private sharedArenaGeo: THREE.PlaneGeometry;
   private sharedArenaMat: THREE.MeshBasicMaterial;
   private subGeo: THREE.PlaneGeometry;
@@ -167,6 +168,17 @@ export class Grid {
     if (this.countFilledSubPixels(col, row) === 0) {
       this.cells[row][col] = 'cleared';
       this.pixelColors[row][col] = null;
+      // Remove the arena tile underneath so cleared cells visually fall
+      // away (look like void). The arena tile would otherwise make a
+      // cleared cell indistinguishable from a passable arena cell.
+      const key = `${col},${row}`;
+      const tile = this.arenaTileByCell.get(key);
+      if (tile) {
+        this.root.remove(tile);
+        this.arenaTileByCell.delete(key);
+        const idx = this.arenaTiles.indexOf(tile);
+        if (idx >= 0) this.arenaTiles.splice(idx, 1);
+      }
     }
   }
 
@@ -209,6 +221,7 @@ export class Grid {
         mesh.position.set(w.x, w.y, 0);
         this.root.add(mesh);
         this.arenaTiles.push(mesh);
+        this.arenaTileByCell.set(`${c},${r}`, mesh);
       }
     }
   }
@@ -254,6 +267,7 @@ export class Grid {
     for (const m of this.pixelMaterials.values()) m.dispose();
     this.pixelMaterials.clear();
     this.arenaTiles.length = 0;
+    this.arenaTileByCell.clear();
   }
 }
 
