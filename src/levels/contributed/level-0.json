@@ -1,0 +1,38 @@
+{
+  "id": "c-level-0",
+  "name": "Level 0",
+  "cols": 6,
+  "rows": 6,
+  "cells": [
+    ["arena", "pixel", "pixel", "pixel", "pixel", "arena"],
+    ["pixel", "arena", "arena", "arena", "arena", "pixel"],
+    ["pixel", "arena", "arena", "arena", "arena", "pixel"],
+    ["pixel", "arena", "arena", "arena", "arena", "pixel"],
+    ["pixel", "arena", "arena", "arena", "arena", "pixel"],
+    ["arena", "pixel", "pixel", "pixel", "pixel", "arena"]
+  ],
+  "pixels": [
+    [null, "yellow", "green", "pink", "red", null],
+    ["red", null, null, null, null, "purple"],
+    ["blue", null, null, null, null, "green"],
+    ["green", null, null, null, null, "blue"],
+    ["yellow", null, null, null, null, "blue"],
+    [null, "red", "red", "pink", "yellow", null]
+  ],
+  "shooters": [
+    { "id": "s-63mhnp", "col": 2, "row": 2, "color": "red", "ammo": 18, "shootsPerSecond": 6 },
+    { "id": "s-xx2q7q", "col": 3, "row": 2, "color": "green", "ammo": 27, "shootsPerSecond": 6 },
+    { "id": "s-sdkje1", "col": 1, "row": 4, "color": "pink", "ammo": 18, "shootsPerSecond": 6 },
+    { "id": "s-srrzt9", "col": 2, "row": 4, "color": "blue", "ammo": 27, "shootsPerSecond": 6 },
+    { "id": "s-1bz1tk", "col": 4, "row": 3, "color": "purple", "ammo": 9, "shootsPerSecond": 6 },
+    { "id": "s-k6zott", "col": 3, "row": 4, "color": "yellow", "ammo": 14, "shootsPerSecond": 6 },
+    { "id": "s-9u032d", "col": 4, "row": 2, "color": "yellow", "ammo": 13, "shootsPerSecond": 6 },
+    { "id": "s-i01kuc", "col": 4, "row": 4, "color": "red", "ammo": 18, "shootsPerSecond": 6 }
+  ],
+  "welds": [
+    { "a": "s-63mhnp", "b": "s-xx2q7q" },
+    { "a": "s-srrzt9", "b": "s-sdkje1" },
+    { "a": "s-1bz1tk", "b": "s-i01kuc" }
+  ],
+  "timeLimit": 60
+}

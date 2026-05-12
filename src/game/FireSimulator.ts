@@ -3,16 +3,22 @@ import type { Direction } from '../shared/types';
 import type { Grid } from './Grid';
 import type { Shooter } from './Shooter';
 
+const SUB = 3;
+
 export interface FireEvent {
   shooter: Shooter;
   direction: Direction;
-  target: { col: number; row: number };
+  target: { col: number; row: number; subC: number; subR: number };
 }
 
 /**
- * Advance the firing simulation by `dt` seconds. Mutates shooter ammo and
- * clears pixels on the grid as shots resolve. Returns an array of fire events
- * for visual hooks.
+ * Advance firing by `dt` seconds. For each idle shooter ready to fire:
+ *   - pick a target sub-pixel (sticky direction + smallest-run heuristic),
+ *   - RESERVE it on the grid (so subsequent ticks won't target it again),
+ *   - decrement ammo,
+ *   - emit a fire event so the caller can spawn a bullet.
+ * The actual sub-pixel clear happens when the bullet arrives (caller's
+ * responsibility, via grid.clearSubPixel).
  */
 export function fireTick(
   dt: number,
@@ -22,8 +28,6 @@ export function fireTick(
   const events: FireEvent[] = [];
   for (const s of shooters) {
     if (s.isHeld) {
-      // Suspend cooldown progress while held; reset partial cooldown so it
-      // doesn't accumulate into an instant shot on drop.
       s.fireCooldown = Math.max(s.fireCooldown, 0);
       continue;
     }
@@ -35,20 +39,17 @@ export function fireTick(
     const dir = pickDirection(s, grid, shooters);
     if (!dir) {
       s.currentDirection = null;
-      // Don't keep adding negative cooldown — pin at 0 so when LOS opens
-      // the shooter fires within one frame.
       s.fireCooldown = 0;
       continue;
     }
-
-    const target = findInnermostMatchingPixel(s, dir, grid, shooters);
+    const target = findInnermostMatchingSubPixel(s, dir, grid, shooters);
     if (!target) {
       s.currentDirection = null;
       s.fireCooldown = 0;
       continue;
     }
 
-    grid.clearPixel(target.col, target.row);
+    grid.reserveSubPixel(target.col, target.row, target.subC, target.subR);
     s.consumeBullet();
     s.currentDirection = dir;
     s.fireCooldown += 1 / s.shootsPerSecond;
@@ -62,13 +63,10 @@ function pickDirection(
   grid: Grid,
   shooters: Shooter[],
 ): Direction | null {
-  // Sticky: keep the current direction while it still has matching run > 0.
   if (s.currentDirection) {
     const run = computeMatchingRun(s, s.currentDirection, grid, shooters);
     if (run > 0) return s.currentDirection;
   }
-  // Otherwise pick the smallest non-zero matching run. Ties broken by
-  // ALL_DIRECTIONS order (up < right < down < left).
   let best: Direction | null = null;
   let bestRun = Infinity;
   for (const d of ALL_DIRECTIONS) {
@@ -81,12 +79,6 @@ function pickDirection(
   return best;
 }
 
-/**
- * Count the matching-color pixels in a 1-cell-wide channel starting from the
- * shooter's cell in `dir`. Walks through arena cells (LOS), stops if blocked
- * by another shooter, then counts consecutive same-color pixels until a
- * non-matching pixel, void, or edge of grid.
- */
 function computeMatchingRun(
   s: Shooter,
   dir: Direction,
@@ -96,16 +88,17 @@ function computeMatchingRun(
   const v = DIR_VECTORS[dir];
   let c = s.col + v.dc;
   let r = s.row + v.dr;
-
-  // Walk through arena cells, breaking on a blocking shooter or non-arena.
-  while (grid.inBounds(c, r) && grid.getCellKind(c, r) === 'arena') {
+  while (grid.inBounds(c, r) && isWalkableForRay(grid.getCellKind(c, r))) {
     if (shooterOccupies(c, r, shooters, s)) return 0;
     c += v.dc;
     r += v.dr;
   }
-
   if (!grid.inBounds(c, r)) return 0;
   if (grid.getCellKind(c, r) !== 'pixel') return 0;
+  if (grid.getPixelColor(c, r) !== s.color) return 0;
+  // Note: this run stops at the first non-matching cell. If a non-matching
+  // pixel sits in front of more matching ones, the run is 0 for now;
+  // matching deeper pixels become reachable only once the front is cleared.
 
   let count = 0;
   while (
@@ -113,31 +106,73 @@ function computeMatchingRun(
     grid.getCellKind(c, r) === 'pixel' &&
     grid.getPixelColor(c, r) === s.color
   ) {
-    count++;
+    count += grid.countAvailableSubPixels(c, r);
     c += v.dc;
     r += v.dr;
   }
   return count;
 }
 
-function findInnermostMatchingPixel(
+function findInnermostMatchingSubPixel(
   s: Shooter,
   dir: Direction,
   grid: Grid,
   shooters: Shooter[],
-): { col: number; row: number } | null {
+): { col: number; row: number; subC: number; subR: number } | null {
   const v = DIR_VECTORS[dir];
   let c = s.col + v.dc;
   let r = s.row + v.dr;
-  while (grid.inBounds(c, r) && grid.getCellKind(c, r) === 'arena') {
+  while (grid.inBounds(c, r) && isWalkableForRay(grid.getCellKind(c, r))) {
     if (shooterOccupies(c, r, shooters, s)) return null;
+    c += v.dc;
+    r += v.dr;
+  }
+  // Walk through any matching-color pixel cells whose available sub-pixels
+  // are all reserved already, looking for the first cell with an unreserved
+  // sub-pixel.
+  while (
+    grid.inBounds(c, r) &&
+    grid.getCellKind(c, r) === 'pixel' &&
+    grid.getPixelColor(c, r) === s.color &&
+    grid.countAvailableSubPixels(c, r) === 0
+  ) {
     c += v.dc;
     r += v.dr;
   }
   if (!grid.inBounds(c, r)) return null;
   if (grid.getCellKind(c, r) !== 'pixel') return null;
   if (grid.getPixelColor(c, r) !== s.color) return null;
-  return { col: c, row: r };
+
+  const mask = grid.getSubMask(c, r);
+  const reserved = grid.getReservedMask(c, r);
+  const available = (sR: number, sC: number) => mask[sR][sC] && !reserved[sR][sC];
+
+  if (dir === 'up') {
+    for (let sR = SUB - 1; sR >= 0; sR--) {
+      for (let sC = 0; sC < SUB; sC++) {
+        if (available(sR, sC)) return { col: c, row: r, subC: sC, subR: sR };
+      }
+    }
+  } else if (dir === 'down') {
+    for (let sR = 0; sR < SUB; sR++) {
+      for (let sC = 0; sC < SUB; sC++) {
+        if (available(sR, sC)) return { col: c, row: r, subC: sC, subR: sR };
+      }
+    }
+  } else if (dir === 'right') {
+    for (let sC = 0; sC < SUB; sC++) {
+      for (let sR = 0; sR < SUB; sR++) {
+        if (available(sR, sC)) return { col: c, row: r, subC: sC, subR: sR };
+      }
+    }
+  } else if (dir === 'left') {
+    for (let sC = SUB - 1; sC >= 0; sC--) {
+      for (let sR = 0; sR < SUB; sR++) {
+        if (available(sR, sC)) return { col: c, row: r, subC: sC, subR: sR };
+      }
+    }
+  }
+  return null;
 }
 
 function shooterOccupies(
@@ -151,4 +186,9 @@ function shooterOccupies(
     if (s.col === c && s.row === r) return true;
   }
   return false;
+}
+
+function isWalkableForRay(kind: 'void' | 'arena' | 'pixel' | 'cleared'): boolean {
+  // Rays pass through arena AND cleared (cleared = a hole where the wall used to be).
+  return kind === 'arena' || kind === 'cleared';
 }

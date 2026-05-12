@@ -11,7 +11,7 @@ export const DIR_VECTORS: Record<Direction, { dc: number; dr: number }> = {
   left: { dc: -1, dr: 0 },
 };
 
-export type CellKind = 'void' | 'arena' | 'pixel';
+export type CellKind = 'void' | 'arena' | 'pixel' | 'cleared';
 
 export interface ShooterDef {
   id: string;

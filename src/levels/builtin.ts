@@ -56,8 +56,8 @@ function makeLevel1(): LevelData {
         col: 2,
         row: 3,
         color: 'pink',
-        ammo: 5,
-        shootsPerSecond: 1.5,
+        ammo: 45,
+        shootsPerSecond: 6,
       },
     ],
     welds: [],
@@ -87,8 +87,8 @@ function makeLevel2(): LevelData {
     cells,
     pixels,
     shooters: [
-      { id: 's-pink', col: 2, row: 2, color: 'pink', ammo: 1, shootsPerSecond: 1.2 },
-      { id: 's-blue', col: 2, row: 3, color: 'blue', ammo: 1, shootsPerSecond: 1.2 },
+      { id: 's-pink', col: 2, row: 2, color: 'pink', ammo: 9, shootsPerSecond: 6 },
+      { id: 's-blue', col: 2, row: 3, color: 'blue', ammo: 9, shootsPerSecond: 6 },
     ],
     welds: [],
     timeLimit: 45,
@@ -118,11 +118,11 @@ function makeLevel3(): LevelData {
     cells,
     pixels,
     shooters: [
-      { id: 's-pink', col: 0, row: 2, color: 'pink', ammo: 3, shootsPerSecond: 1.2 },
-      { id: 's-blue', col: 1, row: 2, color: 'blue', ammo: 1, shootsPerSecond: 1.2 },
+      { id: 's-pink', col: 0, row: 2, color: 'pink', ammo: 27, shootsPerSecond: 6 },
+      { id: 's-blue', col: 1, row: 2, color: 'blue', ammo: 9, shootsPerSecond: 6 },
     ],
     welds: [{ a: 's-pink', b: 's-blue' }],
-    timeLimit: 60,
+    timeLimit: 90,
   };
 }
 

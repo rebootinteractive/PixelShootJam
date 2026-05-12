@@ -6,6 +6,8 @@ import { fireTick } from './FireSimulator';
 import { DragController } from './DragController';
 import { Hud } from './Hud';
 import { WeldLines } from './WeldLines';
+import { Bullets } from './Bullets';
+import { COLOR_HEX } from '../shared/colors';
 
 const FRUSTUM_MARGIN_CELLS = 1.0;
 
@@ -28,6 +30,7 @@ export class GameApp {
   private shooters: Shooter[] = [];
   private welds: WeldDef[] = [];
   private weldLines!: WeldLines;
+  private bullets!: Bullets;
 
   private hud: Hud;
   private drag: DragController;
@@ -91,6 +94,7 @@ export class GameApp {
       (def) => new Shooter(def, this.worldRoot, worldOf),
     );
     this.weldLines = new WeldLines(this.worldRoot);
+    this.bullets = new Bullets(this.worldRoot);
   }
 
   private teardownLevel() {
@@ -98,6 +102,7 @@ export class GameApp {
     this.shooters.length = 0;
     this.welds.length = 0;
     this.weldLines?.dispose();
+    this.bullets?.dispose();
     this.grid.dispose();
   }
 
@@ -128,18 +133,33 @@ export class GameApp {
         this.state = 'lost';
         this.hud.showLose();
       } else {
-        fireTick(dt, this.grid, this.shooters);
+        const events = fireTick(dt, this.grid, this.shooters);
+        for (const ev of events) {
+          const origin = this.grid.worldOf(ev.shooter.col, ev.shooter.row);
+          const target = this.grid.subWorldOf(
+            ev.target.col,
+            ev.target.row,
+            ev.target.subC,
+            ev.target.subR,
+          );
+          const t = ev.target;
+          this.bullets.spawn(origin, target, COLOR_HEX[ev.shooter.color], () => {
+            this.grid.clearSubPixel(t.col, t.row, t.subC, t.subR);
+          });
+        }
         this.harvestDepletedShooters();
-        if (this.grid.totalRemainingPixels() === 0 && this.shooters.length >= 0) {
-          // Win can only happen if there are no pixels left.
-          if (this.state === 'playing') {
-            this.state = 'won';
-            this.hud.showWin();
-          }
+        if (
+          this.grid.totalRemainingPixels() === 0 &&
+          this.bullets.isEmpty() &&
+          this.state === 'playing'
+        ) {
+          this.state = 'won';
+          this.hud.showWin();
         }
       }
     }
 
+    this.bullets.tick(dt);
     this.grid.update(dt);
     this.weldLines.sync(this.welds, this.shooters, (c, r) => this.grid.worldOf(c, r));
     this.renderer.render(this.scene, this.camera);

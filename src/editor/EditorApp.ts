@@ -28,12 +28,12 @@ const TOOL_LABELS: Record<Tool, string> = {
 };
 
 const TOOL_HINTS: Record<Tool, string> = {
-  pixel: 'Tap a cell to paint a wall pixel of the active color.',
-  void: 'Tap a cell to make it void (not part of the playable shape).',
+  pixel: 'Paint a wall pixel of the active color. Number keys 1–6 switch colors.',
+  void: 'Mark a cell as void (not part of the playable shape).',
   shooter:
-    'Tap an empty arena cell to place a shooter. Tap an existing one to update its color/ammo/rate.',
-  weld: 'Tap a shooter to start a weld, then tap an adjacent shooter to complete (tap the same pair again to remove).',
-  erase: 'Tap a cell to clear back to arena (removes pixel or shooter).',
+    'Place a shooter on an empty arena cell. Tap existing to recolor. Ammo is set by Distribute.',
+  weld: 'Tap two adjacent shooters to weld them. Tap the same pair again to unweld.',
+  erase: 'Clear back to arena (removes pixel or shooter).',
 };
 
 function makeBlankLevel(cols: number, rows: number): LevelData {
@@ -97,9 +97,9 @@ export class EditorApp {
 
   private activeTool: Tool = 'pixel';
   private activeColor: ColorKey = 'pink';
-  private ammoValue = 3;
-  private rateValue = 1.2;
+  private rateValue = 6;
   private weldStartId: string | null = null;
+  private onKeyDownBound: (e: KeyboardEvent) => void;
 
   private resizeObserver: ResizeObserver;
   private rafId = 0;
@@ -148,6 +148,8 @@ export class EditorApp {
     this.setStatus(TOOL_HINTS[this.activeTool]);
 
     this.renderer.domElement.addEventListener('pointerdown', this.onPointer);
+    this.onKeyDownBound = (e) => this.onKeyDown(e);
+    window.addEventListener('keydown', this.onKeyDownBound);
 
     this.resizeObserver = new ResizeObserver(() => this.handleResize());
     this.resizeObserver.observe(this.canvasContainer);
@@ -243,8 +245,8 @@ export class EditorApp {
         );
         if (existing) {
           existing.color = this.activeColor;
-          existing.ammo = this.ammoValue;
           existing.shootsPerSecond = this.rateValue;
+          // Leave ammo as-is; Distribute is the source of truth for ammo.
         } else {
           this.working.cells[r][c] = 'arena';
           this.working.pixels[r][c] = null;
@@ -254,7 +256,7 @@ export class EditorApp {
             col: c,
             row: r,
             color: this.activeColor,
-            ammo: this.ammoValue,
+            ammo: 0,
             shootsPerSecond: this.rateValue,
           };
           this.working.shooters.push(def);
@@ -342,19 +344,27 @@ export class EditorApp {
       this.toolbarEl.appendChild(btn);
     }
 
-    // Color picker
+    // Color picker (also bound to number keys 1-6)
     const colorRow = document.createElement('div');
     colorRow.className = 'color-row';
-    for (const c of ALL_COLORS) {
+    ALL_COLORS.forEach((c, i) => {
       const dot = document.createElement('div');
       dot.className = 'color-dot' + (this.activeColor === c ? ' active' : '');
       dot.style.background = COLOR_CSS[c];
+      dot.title = `${c} (${i + 1})`;
+      dot.textContent = String(i + 1);
+      dot.style.color = 'rgba(0,0,0,0.55)';
+      dot.style.fontSize = '11px';
+      dot.style.fontWeight = '700';
+      dot.style.display = 'flex';
+      dot.style.alignItems = 'center';
+      dot.style.justifyContent = 'center';
       dot.onclick = () => {
         this.activeColor = c;
         this.renderToolbar();
       };
       colorRow.appendChild(dot);
-    }
+    });
     this.toolbarEl.appendChild(colorRow);
 
     // Spacer + exit
@@ -393,18 +403,14 @@ export class EditorApp {
       }),
     );
     this.bottomEl.appendChild(
-      makeNumberField('Ammo', this.ammoValue, 1, 99, (v) => {
-        this.ammoValue = v;
-      }),
-    );
-    this.bottomEl.appendChild(
-      makeFloatField('Rate', this.rateValue, 0.2, 10, (v) => {
+      makeFloatField('Rate', this.rateValue, 0.2, 20, (v) => {
         this.rateValue = v;
       }),
     );
 
     const buttons = [
-      { label: '▶ Test', cls: 'btn small', fn: () => this.test() },
+      { label: '⚖ Distribute', cls: 'btn small', fn: () => this.distribute() },
+      { label: '▶ Test', cls: 'btn ghost small', fn: () => this.test() },
       { label: '💾 Save', cls: 'btn ghost small', fn: () => this.save() },
       { label: '↓ Download', cls: 'btn ghost small', fn: () => this.download() },
       { label: '{ } Copy JSON', cls: 'btn ghost small', fn: () => this.openJsonModal() },
@@ -453,6 +459,61 @@ export class EditorApp {
   }
 
   // ─── Buttons ─────────────────────────────────────────────────────────
+  private distribute() {
+    // Sub-pixel count per color (each macro pixel cell = 9 sub-pixels, 1:1 with bullets)
+    const pixelCounts = new Map<ColorKey, number>();
+    for (let r = 0; r < this.working.rows; r++) {
+      for (let c = 0; c < this.working.cols; c++) {
+        if (this.working.cells[r][c] !== 'pixel') continue;
+        const col = this.working.pixels[r][c]!;
+        pixelCounts.set(col, (pixelCounts.get(col) ?? 0) + 9);
+      }
+    }
+
+    // Group shooters by color
+    const byColor = new Map<ColorKey, ShooterDef[]>();
+    for (const s of this.working.shooters) {
+      const arr = byColor.get(s.color) ?? [];
+      arr.push(s);
+      byColor.set(s.color, arr);
+    }
+
+    // Sanity: every color with pixels needs at least one shooter
+    const missing: ColorKey[] = [];
+    for (const [color, count] of pixelCounts) {
+      if (count > 0 && !(byColor.get(color)?.length)) missing.push(color);
+    }
+    if (missing.length > 0) {
+      this.flashStatus(
+        `Distribute failed — no shooter for: ${missing.join(', ')}. Add one or remove those pixels.`,
+      );
+      return;
+    }
+
+    // Wipe all ammo
+    for (const s of this.working.shooters) s.ammo = 0;
+
+    // Distribute per color, as evenly as possible (remainder spreads from the first shooter)
+    const summary: string[] = [];
+    for (const [color, shooters] of byColor) {
+      const total = pixelCounts.get(color) ?? 0;
+      if (total === 0) {
+        summary.push(`${color}: 0`);
+        continue;
+      }
+      const n = shooters.length;
+      const base = Math.floor(total / n);
+      const remainder = total - base * n;
+      for (let i = 0; i < n; i++) {
+        shooters[i].ammo = base + (i < remainder ? 1 : 0);
+      }
+      summary.push(`${color}: ${total}→[${shooters.map((s) => s.ammo).join(',')}]`);
+    }
+
+    this.rebuildScene();
+    this.flashStatus(`Distributed. ${summary.join(' · ')}`);
+  }
+
   private test() {
     this.opts.onTestPlay(cloneLevel(this.working));
   }
@@ -544,9 +605,22 @@ export class EditorApp {
     }, 2200);
   }
 
+  private onKeyDown(e: KeyboardEvent) {
+    const t = e.target as HTMLElement | null;
+    const tag = t?.tagName?.toLowerCase();
+    if (tag === 'input' || tag === 'textarea') return;
+    const idx = '123456'.indexOf(e.key);
+    if (idx >= 0 && idx < ALL_COLORS.length) {
+      this.activeColor = ALL_COLORS[idx];
+      this.renderToolbar();
+      e.preventDefault();
+    }
+  }
+
   dispose() {
     cancelAnimationFrame(this.rafId);
     this.renderer.domElement.removeEventListener('pointerdown', this.onPointer);
+    window.removeEventListener('keydown', this.onKeyDownBound);
     this.resizeObserver.disconnect();
     if (this.statusTimeout != null) clearTimeout(this.statusTimeout);
     this.closeModal();
